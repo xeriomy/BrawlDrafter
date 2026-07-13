@@ -11,6 +11,8 @@ import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Handler
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -53,18 +55,38 @@ class ScreenCaptureManager(private val context: Context) {
         return projectionManager.createScreenCaptureIntent()
     }
 
+    private val handler = Handler(Looper.getMainLooper())
+
     /**
      * Initialize MediaProjection from Activity result.
      */
     fun initProjection(resultCode: Int, data: Intent) {
         val projectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+        val projection = projectionManager.getMediaProjection(resultCode, data)
+        // Register callback BEFORE any capture — required by MediaProjection API
+        projection.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                virtualDisplay?.release()
+                virtualDisplay = null
+                imageReader?.close()
+                imageReader = null
+            }
+        }, handler)
+        mediaProjection = projection
     }
 
     /**
      * Initialize from an already-obtained MediaProjection.
      */
     fun initProjection(projection: MediaProjection) {
+        projection.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                virtualDisplay?.release()
+                virtualDisplay = null
+                imageReader?.close()
+                imageReader = null
+            }
+        }, handler)
         mediaProjection = projection
     }
 
@@ -100,7 +122,7 @@ class ScreenCaptureManager(private val context: Context) {
             virtualDisplay = null
 
             cont.resume(bitmap)
-        }, null)
+        }, handler)
 
         // Create virtual display
         virtualDisplay = projection.createVirtualDisplay(
