@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bg_dark">#1A1A2E</color>
+    <color name="bg_card">#16213E</color>
+    <color name="bg_card_hover">#1F3460</color>
+    <color name="accent_blue">#0F3460</color>
+    <color name="accent_cyan">#00D2FF</color>
+    <color name="accent_green">#00E676</color>
+    <color name="accent_red">#FF5252</color>
+    <color name="accent_yellow">#FFD740</color>
+    <color name="accent_orange">#FF9100</color>
+    <color name="text_primary">#E0E0E0</color>
+    <color name="text_secondary">#A0A0B0</color>
+    <color name="text_bright">#FFFFFF</color>
+    <color name="team_blue">#2979FF</color>
+    <color name="enemy_red">#FF1744</color>
+</resources>
