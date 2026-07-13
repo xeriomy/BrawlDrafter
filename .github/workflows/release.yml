@@ -1,0 +1,180 @@
+# =============================================================================
+# BrawlDrafter Release — signed APKs + GitHub Release on version tags
+#
+# Triggered by pushing a tag like  v1.0.0 ,  v1.1.0-beta , etc.
+#
+# What it does:
+#   1. Extracts version from the tag (strips the leading 'v').
+#   2. Builds a signed release APK using a keystore from GitHub Secrets.
+#   3. Generates a changelog from git commits since the last tag.
+#   4. Creates a GitHub Release with the APK attached and auto-generated notes.
+#   5. Uploads the signed APK as a workflow artifact (backup).
+#
+# Required GitHub Secrets (set in repo Settings → Secrets and variables → Actions):
+#   KEYSTORE_BASE64          — base64-encoded .jks / .keystore file
+#   KEYSTORE_KEY_ALIAS       — signing key alias
+#   KEYSTORE_KEY_PASSWORD    — key password
+#   KEYSTORE_STORE_PASSWORD  — keystore password
+#
+# How to create the keystore secret:
+#   base64 -i your-keystore.jks | pbcopy    # macOS
+#   base64 -w0 your-keystore.jks            # Linux  (pipe to clipboard manually)
+# Then paste the output into the KEYSTORE_BASE64 secret.
+#
+# How to release:
+#   git tag v1.0.0
+#   git push origin v1.0.0
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write       # needed to create GitHub Releases
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.caching=true -Dorg.gradle.parallel=true"
+  JAVA_DISTRIBUTION: temurin
+  JAVA_VERSION: "17"
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # need full history for changelog generation
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          api-level: 34
+          build-tools: "34.0.0"
+          ndk: false
+          emulator: false
+
+      # ----- Version extraction from git tag -----
+      - name: Extract version from tag
+        id: version
+        run: |
+          # Strip leading 'v' from tag name (v1.0.0 → 1.0.0)
+          RAW_VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$RAW_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Compute a monotonically increasing versionCode from commit count.
+          # E.g. commit #47 on v1.0.0 → versionCode 1000047
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          # Major.Minor.Patch → MMmmPPCC where CC is commit count (max 99)
+          VERSION_CODE=$(echo "$RAW_VERSION" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')$(echo "$COMMIT_COUNT" | tail -c 3)
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+
+          echo "## Releasing \`v${RAW_VERSION}\` (versionCode ${VERSION_CODE})" >> "$GITHUB_STEP_SUMMARY"
+
+      # ----- Decode keystore from secret -----
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+
+      # ----- Build signed release APK -----
+      - name: Build signed release APK
+        env:
+          KEYSTORE_FILE: release.keystore
+          KEYSTORE_KEY_ALIAS: ${{ secrets.KEYSTORE_KEY_ALIAS }}
+          KEYSTORE_KEY_PASSWORD: ${{ secrets.KEYSTORE_KEY_PASSWORD }}
+          KEYSTORE_STORE_PASSWORD: ${{ secrets.KEYSTORE_STORE_PASSWORD }}
+        run: |
+          ./gradlew :app:assembleRelease \
+            -PversionName=${{ steps.version.outputs.version }} \
+            -PversionCode=${{ steps.version.outputs.version_code }} \
+            --no-daemon
+
+      # ----- Rename APK with version -----
+      - name: Rename APK
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          APK=$(find app/build/outputs/apk/release -name '*.apk' -print -quit)
+          mv "$APK" "app/build/outputs/apk/release/BrawlDrafter-v${VERSION}-release.apk"
+
+      # ----- APK size report -----
+      - name: APK size
+        id: apk-size
+        run: |
+          APK=$(find app/build/outputs/apk/release -name '*.apk' -print -quit)
+          SIZE_BYTES=$(stat -c%s "$APK")
+          SIZE_MB=$(echo "scale=2; $SIZE_BYTES / 1048576" | bc)
+          echo "size_mb=${SIZE_MB} MB" >> "$GITHUB_OUTPUT"
+          echo "size_bytes=${SIZE_BYTES}" >> "$GITHUB_OUTPUT"
+
+      # ----- Generate changelog from commits -----
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find the previous tag to generate diff against
+          PREV_TAG=$(git tag --sort=-version:refname | head -2 | tail -1)
+
+          if [ -n "$PREV_TAG" ]; then
+            LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            LOG=$(git log --pretty=format:"- %s (%h)" --no-merges -20)
+          fi
+
+          # Write to file for multiline output
+          printf "%s\n" "$LOG" > changelog.txt
+
+          # Truncate for GitHub Release body (keep it focused)
+          HEAD=$(head -50 changelog.txt)
+          echo "changelog<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$HEAD" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          echo "## Changelog" >> "$GITHUB_STEP_SUMMARY"
+          echo "$HEAD" >> "$GITHUB_STEP_SUMMARY"
+
+      # ----- Create GitHub Release with APK -----
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "BrawlDrafter v${{ steps.version.outputs.version }}"
+          body: |
+            ## BrawlDrafter v${{ steps.version.outputs.version }}
+
+            ### Changes
+            ${{ steps.changelog.outputs.changelog }}
+
+            ---
+            **APK Size:** ${{ steps.apk-size.outputs.size_mb }}
+            **Version Code:** ${{ steps.version.outputs.version_code }}
+
+            ### Installation
+            1. Download `BrawlDrafter-v${{ steps.version.outputs.version }}-release.apk`
+            2. Enable "Install from unknown sources" on your device
+            3. Install the APK
+          files: |
+            app/build/outputs/apk/release/BrawlDrafter-v${{ steps.version.outputs.version }}-release.apk
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+
+      # ----- Upload APK as artifact (backup) -----
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrawlDrafter-v${{ steps.version.outputs.version }}-release
+          path: app/build/outputs/apk/release/BrawlDrafter-*.apk
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

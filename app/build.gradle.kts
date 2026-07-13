@@ -13,11 +13,19 @@ android {
         applicationId = "com.xeriomy.brawldrafter"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI injects versionCode / versionName via -P flags; local builds use defaults.
+        versionCode = (findProperty("versionCode") as? String)?.toIntOrNull() ?: 1
+        versionName = (findProperty("versionName") as? String) ?: "1.0.0"
     }
 
     buildTypes {
+        debug {
+            // Debug builds get a distinct applicationId suffix so they
+            // can be installed side-by-side with a release build.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -25,6 +33,17 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Signing is only configured when the keystore env vars are present (CI).
+            // Local release builds fall back to the default debug signing automatically.
+            val ksFile = System.getenv("KEYSTORE_FILE")
+            if (ksFile != null) {
+                signingConfig = signingConfigs.create("release") {
+                    storeFile = file(ksFile)
+                    keyAlias = System.getenv("KEYSTORE_KEY_ALIAS")
+                    keyPassword = System.getenv("KEYSTORE_KEY_PASSWORD")
+                    storePassword = System.getenv("KEYSTORE_STORE_PASSWORD")
+                }
+            }
         }
     }
 

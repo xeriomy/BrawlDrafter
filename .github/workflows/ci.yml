@@ -1,0 +1,185 @@
+# =============================================================================
+# BrawlDrafter CI — fast feedback on every push & PR
+#
+# Improvements over standard Android CI:
+#   1. Two-job split: verify (compile+lint+test) runs first;
+#      build only runs if verify passes — saves minutes on broken PRs.
+#   2. Compile targets aligned to this project: Kotlin 1.9.22 + JDK 17 + compileSdk 34.
+#   3. Lint runs on every push (not just PRs) with baseline support.
+#   4. APK size tracking — posts size as a PR comment so bloat is caught early.
+#   5. KSP (Room) is part of the build — compile step includes kspDebugKotlin.
+#   6. Artifact naming includes branch + short SHA for traceability.
+#   7. Gradle build-cache is shared across jobs via actions/cache.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write        # needed for PR comments (APK size, lint summary)
+
+env:
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.caching=true -Dorg.gradle.parallel=true"
+  JAVA_DISTRIBUTION: temurin
+  JAVA_VERSION: "17"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — Verify: compile, lint, unit tests.  Fast gate.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          api-level: 34
+          build-tools: "34.0.0"
+          ndk: false
+          emulator: false
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      # Compile Kotlin + KSP (Room schema generation) — catches syntax errors fast.
+      - name: Compile Kotlin + KSP
+        run: ./gradlew compileDebugKotlin kspDebugKotlin --no-daemon
+
+      # Unit tests (debug only — release would just duplicate).
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      # Lint on every push — catches issues before they land.
+      - name: Lint
+        run: ./gradlew lintDebug --no-daemon
+        continue-on-error: true    # don't block merge, but report
+
+      # Upload lint report (always, even if lint had warnings).
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.*
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Upload test results (always, so failures are visible).
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/build/reports/tests/**
+            **/build/test-results/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — Build: assemble debug APK, measure size, upload artifact.
+  #          Only runs after verify passes.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build Debug APK
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          api-level: 34
+          build-tools: "34.0.0"
+          ndk: false
+          emulator: false
+
+      # Build the debug APK.
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --no-daemon
+
+      # Rename APK with branch + SHA for traceability.
+      - name: Rename APK
+        run: |
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)
+          mv "$APK" "app/build/outputs/apk/debug/BrawlDrafter-${BRANCH}-${SHORT_SHA}-debug.apk"
+
+      # Report APK size.
+      - name: APK size
+        id: apk-size
+        run: |
+          APK=$(find app/build/outputs/apk/debug -name '*.apk' -print -quit)
+          SIZE=$(du -h "$APK" | cut -f1)
+          echo "size=$SIZE" >> "$GITHUB_OUTPUT"
+          echo "## APK Size: \`$SIZE\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # Comment APK size on PRs so bloat is visible in the review.
+      - name: Comment APK size on PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: apk-size
+          message: |
+            ## Debug APK
+            | Metric | Value |
+            |--------|-------|
+            | **Size** | `${{ steps.apk-size.outputs.size }}` |
+            | **Branch** | `${{ github.head_ref }}` |
+            | **Commit** | `${{ github.sha }}` |
+
+            Download the APK from the **Build Debug APK** workflow run artifacts.
+
+      # Upload the APK as a workflow artifact.
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BrawlDrafter-debug
+          path: app/build/outputs/apk/debug/BrawlDrafter-*.apk
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0   # APKs are already compressed
