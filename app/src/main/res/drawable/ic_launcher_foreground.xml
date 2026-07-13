@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- BD logo - stylized bracket/B shape -->
+    <path
+        android:fillColor="#00D2FF"
+        android:pathData="M32,28 L32,80 L44,80 L44,72 L40,72 L40,36 L44,36 L44,28 Z"/>
+    <path
+        android:fillColor="#00D2FF"
+        android:pathData="M52,40 L52,46 L48,46 L48,62 L52,62 L52,68 L56,68 L56,40 Z"/>
+    <path
+        android:fillColor="#00D2FF"
+        android:pathData="M60,28 L60,80 L72,80 L72,72 L68,72 L68,36 L72,36 L72,28 Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M38,42 L38,66 L50,66 L50,60 L44,60 L44,42 Z"/>
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M66,42 L66,66 L78,66 L78,60 L72,60 L72,42 Z"/>
+</vector>
