@@ -417,7 +417,7 @@ class FloatingButtonService : Service() {
     // ========== Loading Indicator ==========
 
     private fun showLoading(message: String) {
-        dismissLoading()
+        hideLoading()
 
         val density = resources.displayMetrics.density
         val view = LinearLayout(this).apply {

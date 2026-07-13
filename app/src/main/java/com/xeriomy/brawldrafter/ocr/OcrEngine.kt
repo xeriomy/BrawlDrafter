@@ -5,7 +5,7 @@ import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
-import com.google.mlkit.vision.text.TextRecognizerOptions
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.xeriomy.brawldrafter.data.model.DraftState
 import com.xeriomy.brawldrafter.data.model.MapInfo
 import com.xeriomy.brawldrafter.data.model.ALL_BRAWLER_NAMES
@@ -58,10 +58,10 @@ class OcrEngine {
         return suspendCancellableCoroutine { cont ->
             recognizer.process(image)
                 .addOnSuccessListener { visionText ->
-                    val results = visionText.textBlocks.flatMap { block ->
+                    val results: List<Pair<String, Rect>> = visionText.textBlocks.flatMap { block ->
                         block.lines.flatMap { line ->
                             line.elements.map { element ->
-                                element.text to element.boundingBox ?: Rect(0, 0, 0, 0)
+                                element.text to (element.boundingBox ?: Rect(0, 0, 0, 0))
                             }
                         }
                     }

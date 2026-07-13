@@ -175,8 +175,10 @@ object DraftScreenParser {
             allText.appendLine(text)
         }
 
-        val mapName = mapNameParts.joinToString(" ").trim()
-            .removeSuffix("map", ignoreCase = true).trim()
+        var mapName = mapNameParts.joinToString(" ").trim()
+        if (mapName.endsWith("map", ignoreCase = true)) {
+            mapName = mapName.dropLast(3).trim()
+        }
 
         val phase = when {
             isBanPhase -> DraftState.DraftPhase.BAN_PHASE

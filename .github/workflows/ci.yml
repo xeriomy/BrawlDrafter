@@ -1,17 +1,3 @@
-# =============================================================================
-# BrawlDrafter CI — fast feedback on every push & PR
-#
-# Improvements over standard Android CI:
-#   1. Two-job split: verify (compile+lint+test) runs first;
-#      build only runs if verify passes — saves minutes on broken PRs.
-#   2. Compile targets aligned to this project: Kotlin 1.9.22 + JDK 17 + compileSdk 34.
-#   3. Lint runs on every push (not just PRs) with baseline support.
-#   4. APK size tracking — posts size as a PR comment so bloat is caught early.
-#   5. KSP (Room) is part of the build — compile step includes kspDebugKotlin.
-#   6. Artifact naming includes branch + short SHA for traceability.
-#   7. Gradle build-cache is shared across jobs via actions/cache.
-# =============================================================================
-
 name: CI
 
 on:
@@ -27,7 +13,7 @@ concurrency:
 
 permissions:
   contents: read
-  pull-requests: write        # needed for PR comments (APK size, lint summary)
+  pull-requests: write
 
 env:
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.caching=true -Dorg.gradle.parallel=true"
@@ -35,13 +21,10 @@ env:
   JAVA_VERSION: "17"
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Job 1 — Verify: compile, lint, unit tests.  Fast gate.
-  # ---------------------------------------------------------------------------
-  verify:
-    name: Verify
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,7 +40,7 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork }}
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -70,76 +53,23 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
-      # Compile Kotlin + KSP (Room schema generation) — catches syntax errors fast.
-      - name: Compile Kotlin + KSP
-        run: ./gradlew compileDebugKotlin kspDebugKotlin --no-daemon
+      # Compile both modules first — fast feedback if there's a syntax error.
+      - name: Compile
+        run: ./gradlew compileDebugKotlin compileDebugJavaWithJavac
 
-      # Unit tests (debug only — release would just duplicate).
+      # Unit tests — only debug variant (release tests just duplicate debug).
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
+        run: ./gradlew testDebugUnitTest
 
-      # Lint on every push — catches issues before they land.
+      # Lint — only on PRs (slow, and abortOnError=false means it won't
+      # fail the build anyway).
       - name: Lint
-        run: ./gradlew lintDebug --no-daemon
-        continue-on-error: true    # don't block merge, but report
+        if: github.event_name == 'pull_request'
+        run: ./gradlew lintDebug
 
-      # Upload lint report (always, even if lint had warnings).
-      - name: Upload lint report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: lint-report
-          path: app/build/reports/lint-results-debug.*
-          if-no-files-found: ignore
-          retention-days: 7
-
-      # Upload test results (always, so failures are visible).
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: |
-            **/build/reports/tests/**
-            **/build/test-results/**
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # ---------------------------------------------------------------------------
-  # Job 2 — Build: assemble debug APK, measure size, upload artifact.
-  #          Only runs after verify passes.
-  # ---------------------------------------------------------------------------
-  build:
-    name: Build Debug APK
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v5
-        with:
-          distribution: ${{ env.JAVA_DISTRIBUTION }}
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
-        with:
-          api-level: 34
-          build-tools: "34.0.0"
-          ndk: false
-          emulator: false
-
-      # Build the debug APK.
+      # Assemble debug APK.
       - name: Assemble debug APK
-        run: ./gradlew :app:assembleDebug --no-daemon
+        run: ./gradlew :app:assembleDebug
 
       # Rename APK with branch + SHA for traceability.
       - name: Rename APK
@@ -172,9 +102,8 @@ jobs:
             | **Branch** | `${{ github.head_ref }}` |
             | **Commit** | `${{ github.sha }}` |
 
-            Download the APK from the **Build Debug APK** workflow run artifacts.
+            Download the APK from the **Build & Test** workflow run artifacts.
 
-      # Upload the APK as a workflow artifact.
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -182,4 +111,16 @@ jobs:
           path: app/build/outputs/apk/debug/BrawlDrafter-*.apk
           if-no-files-found: error
           retention-days: 14
-          compression-level: 0   # APKs are already compressed
+          compression-level: 0
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            **/build/reports/tests/**
+            **/build/reports/lint-results-*.html
+            **/build/reports/lint-results-*.xml
+          if-no-files-found: ignore
+          retention-days: 7

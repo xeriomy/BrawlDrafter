@@ -16,8 +16,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -158,17 +156,11 @@ fun MainScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        if (isRunning) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                        contentDescription = null,
-                        tint = if (isRunning) Color(0xFF00E676) else Color(0xFFA0A0B0)
-                    )
-                    Spacer(Modifier.width(12.dp))
                     Text(
                         text = if (isRunning) "Overlay Active" else "Overlay Inactive",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Medium,
-                        color = Color.White
+                        color = if (isRunning) Color(0xFF00E676) else Color.White
                     )
                 }
 
@@ -279,8 +271,6 @@ fun MainScreen(
                     .weight(1f)
                     .height(52.dp)
             ) {
-                Icon(Icons.Default.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
                 Text("Start Overlay", color = Color(0xFF1A1A2E), fontWeight = FontWeight.Bold)
             }
 
@@ -294,8 +284,6 @@ fun MainScreen(
                     .weight(1f)
                     .height(52.dp)
             ) {
-                Icon(Icons.Default.Stop, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
                 Text("Stop")
             }
         }

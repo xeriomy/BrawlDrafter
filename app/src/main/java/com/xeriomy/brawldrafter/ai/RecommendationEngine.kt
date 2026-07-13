@@ -97,14 +97,15 @@ class RecommendationEngine(
 
             score = score.coerceIn(0.0, 100.0)
 
+            val wrOnMap = mapStat?.winRate ?: brawler.winRate
             Recommendation(
                 brawlerName = brawlerName,
                 score = score,
-                winRateOnMap = mapStat?.winRate ?: brawler.winRate,
+                winRateOnMap = wrOnMap,
                 counterTo = brawler.counters.filter { it in draftState.enemyPicks },
                 synergyWith = brawler.synergies.filter { it in draftState.teamPicks },
                 weakTo = brawler.weakTo.filter { it in draftState.enemyPicks },
-                reasoning = "Data-only: WR on map=${"%.1f".format(winRateOnMap)}%, counters ${counterTo.size} enemies, synergizes with ${synergyWith.size} teammates.",
+                reasoning = "Data-only: WR on map=${"%.1f".format(wrOnMap)}%, counters ${brawler.counters.count { it in draftState.enemyPicks }} enemies, synergizes with ${brawler.synergies.count { it in draftState.teamPicks }} teammates.",
                 tier = brawler.tier
             )
         }
