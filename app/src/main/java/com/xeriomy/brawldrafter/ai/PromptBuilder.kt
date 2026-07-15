@@ -170,14 +170,17 @@ The draft screen layout:
 - Top section: ENEMY team brawlers (shown as circular portrait icons, left to right)
 - Bottom section: YOUR TEAM brawlers (shown as circular portrait icons, left to right)
 - Center area: Map name and game mode text
-- Banned brawlers may have an X overlay or appear grayed out
+- Banned brawlers have an X overlay or appear grayed out with "BAN" label
+- Empty/unpicked slots show as dark circles or question marks
 
-Identify ALL brawlers visible in the draft. Determine if each is on the top row (enemy) or bottom row (team). Also read the map name and game mode if visible.
+Identify ALL brawlers visible. Separate picks (actively chosen) from bans (X'd out). Determine team vs enemy based on top (enemy) or bottom (team) row. Read map name and game mode.
 
 Respond with ONLY a valid JSON object (no markdown, no explanation):
 {
   "teamPicks": ["BrawlerName1"],
   "enemyPicks": ["BrawlerName1"],
+  "teamBans": ["BannedBrawler1"],
+  "enemyBans": ["BannedBrawler1"],
   "mapName": "map name here",
   "gameMode": "game mode here"
 }
@@ -193,31 +196,23 @@ Known Brawl Stars brawlers: Shelly, Nita, Colt, Bull, Jessie, Brock, Dynamike, B
             .removePrefix("```json").removePrefix("```")
             .removeSuffix("```").trim()
 
+        fun parseJson(json: JsonObject) = VisionDraftResult(
+            teamPicks = json.getAsJsonArray("teamPicks")?.map { it.asString } ?: emptyList(),
+            enemyPicks = json.getAsJsonArray("enemyPicks")?.map { it.asString } ?: emptyList(),
+            teamBans = json.getAsJsonArray("teamBans")?.map { it.asString } ?: emptyList(),
+            enemyBans = json.getAsJsonArray("enemyBans")?.map { it.asString } ?: emptyList(),
+            mapName = json.get("mapName")?.asString ?: "",
+            gameMode = json.get("gameMode")?.asString ?: ""
+        )
+
         return try {
-            val json = gson.fromJson(clean, JsonObject::class.java)
-            VisionDraftResult(
-                teamPicks = json.getAsJsonArray("teamPicks")?.map { it.asString } ?: emptyList(),
-                enemyPicks = json.getAsJsonArray("enemyPicks")?.map { it.asString } ?: emptyList(),
-                mapName = json.get("mapName")?.asString ?: "",
-                gameMode = json.get("gameMode")?.asString ?: ""
-            )
+            parseJson(gson.fromJson(clean, JsonObject::class.java))
         } catch (e: Exception) {
             val match = Regex("\\{.*\\}", RegexOption.DOT_MATCHES_ALL).find(clean)?.value
             if (match != null) {
-                try {
-                    val json = gson.fromJson(match, JsonObject::class.java)
-                    VisionDraftResult(
-                        teamPicks = json.getAsJsonArray("teamPicks")?.map { it.asString } ?: emptyList(),
-                        enemyPicks = json.getAsJsonArray("enemyPicks")?.map { it.asString } ?: emptyList(),
-                        mapName = json.get("mapName")?.asString ?: "",
-                        gameMode = json.get("gameMode")?.asString ?: ""
-                    )
-                } catch (_: Exception) {
-                    VisionDraftResult()
-                }
-            } else {
-                VisionDraftResult()
-            }
+                try { parseJson(gson.fromJson(match, JsonObject::class.java)) }
+                catch (_: Exception) { VisionDraftResult() }
+            } else { VisionDraftResult() }
         }
     }
 }

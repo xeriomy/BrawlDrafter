@@ -41,6 +41,8 @@ data class DraftState(
     val mapGameMode: MapInfo.GameMode = MapInfo.GameMode.UNKNOWN,
     val teamPicks: List<String> = emptyList(),
     val enemyPicks: List<String> = emptyList(),
+    val teamBans: List<String> = emptyList(),
+    val enemyBans: List<String> = emptyList(),
     val isYourTurn: Boolean = false,
     val availableBrawlers: List<String> = emptyList(),
     val draftPhase: DraftPhase = DraftPhase.UNKNOWN
@@ -52,23 +54,25 @@ data class DraftState(
     /** All currently picked brawlers (both teams) */
     val allPicks: List<String> get() = teamPicks + enemyPicks
 
+    /** All bans (both teams) */
+    val allBans: List<String> get() = teamBans + enemyBans
+
     /** Brawlers not yet picked */
     val unpicked: List<String>
-        get() = ALL_BRAWLER_NAMES.filter { it !in allPicks }
+        get() = ALL_BRAWLER_NAMES.filter { it !in allPicks && it !in allBans }
 
     /** Whether this looks like a real Brawl Stars draft screen.
      *  Strict validation to avoid false positives from scanning the app's own UI.
      *  Requires either:
-     *  - A recognized Brawl Stars game mode (Gem Grab, Brawl Ball, etc.)
-     *  - 3+ unique real brawler names detected
-     *  - A game mode AND at least 1 brawler
+     *  - 3+ unique brawler names (picks or bans)
+     *  - A recognized game mode AND at least 1 brawler
      */
     val isValidDraft: Boolean
         get() {
-            val uniquePicks = allPicks.toSet()
+            val uniqueBrawlers = (allPicks + allBans).toSet()
             val hasGameMode = mapGameMode != MapInfo.GameMode.UNKNOWN
-            val hasManyBrawlers = uniquePicks.size >= 3
-            val hasBrawlerAndMode = uniquePicks.size >= 1 && hasGameMode
+            val hasManyBrawlers = uniqueBrawlers.size >= 3
+            val hasBrawlerAndMode = uniqueBrawlers.size >= 1 && hasGameMode
             return hasManyBrawlers || hasBrawlerAndMode
         }
 }

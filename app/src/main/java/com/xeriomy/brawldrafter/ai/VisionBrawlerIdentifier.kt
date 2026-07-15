@@ -29,6 +29,8 @@ import kotlin.coroutines.resumeWithException
 data class VisionDraftResult(
     val teamPicks: List<String> = emptyList(),
     val enemyPicks: List<String> = emptyList(),
+    val teamBans: List<String> = emptyList(),
+    val enemyBans: List<String> = emptyList(),
     val mapName: String = "",
     val gameMode: String = ""
 ) {
@@ -44,9 +46,16 @@ data class VisionDraftResult(
             mapGameMode = resolvedGameMode,
             teamPicks = teamPicks,
             enemyPicks = enemyPicks,
+            teamBans = teamBans,
+            enemyBans = enemyBans,
             isYourTurn = true,
-            draftPhase = if (teamPicks.isNotEmpty() || enemyPicks.isNotEmpty())
-                DraftState.DraftPhase.PICK_PHASE else DraftState.DraftPhase.UNKNOWN
+            draftPhase = when {
+                (teamBans.isNotEmpty() || enemyBans.isNotEmpty()) && teamPicks.isEmpty() && enemyPicks.isEmpty()
+                    -> DraftState.DraftPhase.BAN_PHASE
+                teamPicks.isNotEmpty() || enemyPicks.isNotEmpty()
+                    -> DraftState.DraftPhase.PICK_PHASE
+                else -> DraftState.DraftPhase.UNKNOWN
+            }
         )
     }
 

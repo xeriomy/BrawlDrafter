@@ -32,17 +32,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Foreground service that manages the floating overlay button and results panel.
+ * Foreground service managing the floating overlay button and draft analysis panel.
  *
- * Supports two analysis modes (set in app settings):
- * - "api_only"   — pure data-driven scoring from Brawlify API
- * - "ai_plus_api" — hybrid AI + API analysis
+ * Two modes: "api_only" (Brawlify meta data) and "ai_plus_api" (vision + AI + meta).
  *
- * Analysis pipeline:
- * 1. User taps floating BD button
- * 2. Scan overlay appears with animated green scan line
- * 3. Screen captured → OCR → draft parsed → recommendations fetched
- * 4. Results panel shown with ranked picks
+ * Layout (result overlay):
+ *   Top-left:     GameMode - MapName
+ *   Top-right:    Bans (smaller)
+ *   Center-left:  Our team picks (+ recommended for empty slots)
+ *   Center-right: Enemy picks
+ *   Bottom-center: Top suggestion with reasoning
  */
 class FloatingButtonService : Service() {
 
@@ -56,7 +55,6 @@ class FloatingButtonService : Service() {
     private var stepTitleView: TextView? = null
     private var stepDetailView: TextView? = null
     private var scanAnimator: ValueAnimator? = null
-    private var detectedInfoView: TextView? = null
 
     private lateinit var screenCaptureManager: ScreenCaptureManager
     private lateinit var ocrEngine: OcrEngine
@@ -65,12 +63,15 @@ class FloatingButtonService : Service() {
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
     )
 
-    // Touch handling for dragging the floating button
+    // Touch handling for dragging
     private var initialX = 0
     private var initialY = 0
     private var initialTouchX = 0f
     private var initialTouchY = 0f
     private var isDragging = false
+
+    // Store last draft state for result display
+    private var lastDraftState: DraftState? = null
 
     companion object {
         const val NOTIFICATION_ID = 1
@@ -92,7 +93,6 @@ class FloatingButtonService : Service() {
         }
     }
 
-    // Read current mode from shared preferences
     private val analysisMode: String
         get() = getSharedPreferences("brawldrafter", MODE_PRIVATE)
             .getString("mode", MODE_API_ONLY) ?: MODE_API_ONLY
@@ -105,7 +105,6 @@ class FloatingButtonService : Service() {
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         screenCaptureManager = ScreenCaptureManager(this)
         ocrEngine = OcrEngine()
-
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
         showFloatingButton()
@@ -114,7 +113,6 @@ class FloatingButtonService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.let {
             if (it.hasExtra("resultCode") && it.hasExtra("data")) {
-                // Only init projection if not already active — reusing resultData causes crash
                 if (!screenCaptureManager.isReady) {
                     val resultCode = it.getIntExtra("resultCode", 0)
                     val data = it.getParcelableExtra<Intent>("data")
@@ -144,20 +142,19 @@ class FloatingButtonService : Service() {
     @SuppressLint("ClickableViewAccessibility")
     private fun showFloatingButton() {
         val density = resources.displayMetrics.density
-        val buttonSize = (52 * density).toInt()
+        val buttonSize = (48 * density).toInt()
 
         val layout = LinearLayout(this).apply {
-            setBackgroundColor(ContextCompat.getColor(this@FloatingButtonService, R.color.accent_cyan))
+            setBackgroundColor(0xB000E676.toInt()) // semi-transparent green
             gravity = Gravity.CENTER
             orientation = LinearLayout.VERTICAL
-            elevation = 8f
+            elevation = 4f
         }
 
-        // Top line showing mode
         val modeLabel = TextView(this).apply {
             text = if (isAiMode) "AI" else "API"
-            textSize = 8f
-            setTextColor(ContextCompat.getColor(this@FloatingButtonService, R.color.bg_dark))
+            textSize = 7f
+            setTextColor(0xFF000000.toInt())
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, (2 * density).toInt(), 0, 0)
         }
@@ -165,8 +162,8 @@ class FloatingButtonService : Service() {
 
         val icon = TextView(this).apply {
             text = "BD"
-            textSize = 16f
-            setTextColor(ContextCompat.getColor(this@FloatingButtonService, R.color.bg_dark))
+            textSize = 15f
+            setTextColor(0xFF000000.toInt())
             textAlignment = TextView.TEXT_ALIGNMENT_CENTER
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, 0, 0, (2 * density).toInt())
@@ -181,8 +178,8 @@ class FloatingButtonService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.END
-            x = 16
-            y = 200
+            x = 12
+            y = 180
         }
 
         layout.setOnTouchListener(object : View.OnTouchListener {
@@ -208,9 +205,7 @@ class FloatingButtonService : Service() {
                         return true
                     }
                     MotionEvent.ACTION_UP -> {
-                        if (!isDragging) {
-                            onFloatingButtonClicked()
-                        }
+                        if (!isDragging) onFloatingButtonClicked()
                         return true
                     }
                 }
@@ -226,51 +221,67 @@ class FloatingButtonService : Service() {
 
     private fun onFloatingButtonClicked() {
         if (!screenCaptureManager.isReady) {
-            Toast.makeText(this, "Screen capture not ready. Re-open the app.", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Screen capture expired. Re-open the app to re-authorize.", Toast.LENGTH_LONG).show()
             return
         }
+
+        // Dismiss previous results
+        dismissResultPanel()
 
         serviceScope.launch {
             showScanOverlay()
             try {
                 val result = performAnalysis()
                 hideScanOverlay()
-
                 if (result != null) {
-                    showResultPanel(result)
+                    showResultPanel(result, lastDraftState)
                 } else {
                     showNotDraftToast()
                 }
             } catch (e: Exception) {
                 hideScanOverlay()
-                Toast.makeText(this@FloatingButtonService, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                val msg = e.message ?: "Unknown error"
+                if (msg.contains("non-current", ignoreCase = true) || msg.contains("VirtualDisplay", ignoreCase = true)) {
+                    Toast.makeText(this@FloatingButtonService, "Screen capture expired. Stop and restart overlay.", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this@FloatingButtonService, "Error: $msg", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
 
     private fun showNotDraftToast() {
-        Toast.makeText(
-            this,
-            "No draft detected. Make sure Brawl Stars draft screen is visible.",
-            Toast.LENGTH_LONG
-        ).show()
+        Toast.makeText(this, "No draft detected. Open Brawl Stars draft screen first.", Toast.LENGTH_LONG).show()
     }
 
     /**
-     * Full analysis pipeline with step-by-step scan overlay updates.
+     * Full analysis pipeline.
+     * CRITICAL: Hides ALL overlay views before screen capture to prevent
+     * the overlay's own text from being OCR'd as fake draft data.
      */
     private suspend fun performAnalysis(): DraftAnalysis? {
         val sw = screenCaptureManager.screenWidth
         val sh = screenCaptureManager.screenHeight
 
-        // Step 1: Capture screen
-        updateScanStep("Capturing Screen", "Taking screenshot...", 0.1f)
-        delay(400)
-        val bitmap = screenCaptureManager.captureScreen()
-            ?: return null
+        // Step 1: HIDE overlays, capture clean screen, then restore
+        updateScanStep("Capturing", "Taking screenshot...", 0.1f)
+        delay(200)
 
-        // Step 2: Run OCR for map name and game mode (text is shown on draft screen)
-        updateScanStep("Running OCR", "Scanning for map and mode text...", 0.25f)
+        // Hide overlay views so they don't appear in the capture
+        scanOverlayRoot?.visibility = View.GONE
+        floatingButton?.visibility = View.GONE
+        delay(100) // Let the UI settle
+
+        val bitmap = try {
+            screenCaptureManager.captureScreen()
+        } finally {
+            // Always restore visibility
+            scanOverlayRoot?.visibility = View.VISIBLE
+            floatingButton?.visibility = View.VISIBLE
+        } ?: return null
+
+        // Step 2: OCR for map name and game mode text
+        updateScanStep("Scanning", "Reading map and mode...", 0.25f)
         val textWithPositions = ocrEngine.analyzeWithPositions(bitmap)
 
         val ocrDraftState: DraftState = if (textWithPositions.isNotEmpty()) {
@@ -279,10 +290,9 @@ class FloatingButtonService : Service() {
             ocrEngine.analyzeDraftScreen(bitmap)
         }
 
-        // Step 3: Identify brawlers (vision for AI mode, or OCR fallback)
+        // Step 3: Identify brawlers (vision for AI mode, OCR fallback for API-only)
         val finalDraftState: DraftState = if (isAiMode) {
-            // AI+API: use vision API to identify brawlers from their portrait icons
-            updateScanStep("Analyzing Draft", "Identifying brawlers from icons...", 0.45f)
+            updateScanStep("Analyzing", "Identifying brawlers from icons...", 0.45f)
             val app = application as? BrawlDrafterApp
             val engine = app?.currentEngine
             val visionId = engine?.createVisionIdentifier()
@@ -290,57 +300,47 @@ class FloatingButtonService : Service() {
             if (visionId != null) {
                 try {
                     val visionResult = visionId.identify(bitmap)
-                    updateScanStep("Analyzing Draft", "Brawlers identified!", 0.6f)
+                    updateScanStep("Analyzing", "Brawlers identified!", 0.6f)
                     visionResult.toDraftState(ocrGameMode = ocrDraftState.mapGameMode)
                 } catch (e: Exception) {
-                    // Vision failed, fall back to OCR results
                     ocrDraftState
                 }
             } else {
                 ocrDraftState
             }
         } else {
-            // API-only: rely on OCR for map/mode, brawler picks won't be available from icons
             ocrDraftState
         }
 
+        lastDraftState = finalDraftState
+
         // Step 4: Validate — is this actually a draft screen?
-        // Requires: 3+ unique brawler names, OR game mode + 1+ brawler
-        // This prevents false positives from scanning the app's own UI
         if (!finalDraftState.isValidDraft) {
-            updateScanStep("No Draft Found", "Switch to Brawl Stars draft screen", 1.0f)
-            delay(1200)
+            updateScanStep("No Draft", "Switch to Brawl Stars draft screen", 1.0f)
+            delay(1000)
             return null
         }
 
-        // Show detected info
-        val detectedText = buildString {
-            if (finalDraftState.teamPicks.isNotEmpty()) append("Team: ${finalDraftState.teamPicks.joinToString(", ")}  ")
-            if (finalDraftState.enemyPicks.isNotEmpty()) append("Enemy: ${finalDraftState.enemyPicks.joinToString(", ")}  ")
-            if (finalDraftState.mapName.isNotBlank()) append("Map: ${finalDraftState.mapName}")
-        }
-        showDetectedInfo(detectedText.trim())
-
         // Step 5: Get recommendations
-        val modeLabel = if (isAiMode) "AI + API Analysis" else "Meta Data Analysis"
-        updateScanStep(modeLabel, "Generating pick recommendations...", 0.75f)
+        val modeLabel = if (isAiMode) "AI + API" else "Meta Data"
+        updateScanStep(modeLabel, "Generating recommendations...", 0.75f)
 
         val app = application as? BrawlDrafterApp
         val engine = app?.currentEngine
 
         val analysis = if (isAiMode) {
-            engine?.analyze(finalDraftState) ?: engine?.analyzeApiOnly(finalDraftState) ?: return null
+            engine?.analyze(finalDraftState) ?: return null
         } else {
             engine?.analyzeApiOnly(finalDraftState) ?: return null
         }
 
-        updateScanStep("Complete", "Preparing results...", 1.0f)
-        delay(500)
+        updateScanStep("Done", "", 1.0f)
+        delay(300)
 
         return analysis
     }
 
-    // ========== Scan Overlay ==========
+    // ========== Scan Overlay (minimal, transparent) ==========
 
     @SuppressLint("SetTextI18n")
     private fun showScanOverlay() {
@@ -351,25 +351,24 @@ class FloatingButtonService : Service() {
         val sh = screenCaptureManager.screenHeight
 
         val root = FrameLayout(this).apply {
-            setBackgroundColor(0xCC000000.toInt()) // 80% opaque black
+            setBackgroundColor(0x60000000.toInt()) // 38% opaque dark
         }
 
-        // Scan frame (custom animated view)
-        val frameW = (sw * 0.72f).toInt()
-        val frameH = (sh * 0.38f).toInt()
+        // Scan frame
+        val frameW = (sw * 0.7f).toInt()
+        val frameH = (sh * 0.35f).toInt()
 
         val scanFrame = ScanOverlayView(this).apply {
             layoutParams = FrameLayout.LayoutParams(frameW, frameH).apply {
                 gravity = Gravity.CENTER
-                topMargin = (-(40 * density)).toInt() // Shift up a bit
+                topMargin = (-(30 * density)).toInt()
             }
         }
         root.addView(scanFrame)
         scanFrameView = scanFrame
 
-        // Start scan line animation
         scanAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 1200
+            duration = 1000
             repeatCount = ValueAnimator.INFINITE
             interpolator = LinearInterpolator()
             addUpdateListener { anim ->
@@ -377,47 +376,10 @@ class FloatingButtonService : Service() {
             }
         }.also { it.start() }
 
-        // Top bar: BD logo + mode badge
-        val topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((20 * density).toInt(), (16 * density).toInt(), (20 * density).toInt(), 0)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        val logoText = TextView(this).apply {
-            text = "BD"
-            textSize = 18f
-            setTextColor(0xFF00E676.toInt())
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        topBar.addView(logoText)
-
-        // Mode badge
-        val modeBadge = TextView(this).apply {
-            text = "  ${if (isAiMode) "AI + API" else "API ONLY"}  "
-            textSize = 10f
-            setTextColor(0xFF000000.toInt())
-            setBackgroundColor(if (isAiMode) 0xFF00D2FF.toInt() else 0xFF00E676.toInt())
-            typeface = Typeface.DEFAULT_BOLD
-            setPadding((6 * density).toInt(), (2 * density).toInt(), (6 * density).toInt(), (2 * density).toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                leftMargin = (12 * density).toInt()
-            }
-        }
-        topBar.addView(modeBadge)
-        root.addView(topBar)
-
-        // Step title
+        // Step text (centered below scan frame)
         val stepTitle = TextView(this).apply {
-            text = "Initializing..."
-            textSize = 16f
+            text = "Scanning..."
+            textSize = 14f
             setTextColor(0xFF00E676.toInt())
             typeface = Typeface.DEFAULT_BOLD
             textAlignment = View.TEXT_ALIGNMENT_CENTER
@@ -426,68 +388,44 @@ class FloatingButtonService : Service() {
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = (sh / 2 + frameH / 2 - 20 * density).toInt()
+                topMargin = (sh / 2 + frameH / 2 - 10 * density).toInt()
             }
         }
         root.addView(stepTitle)
         stepTitleView = stepTitle
 
-        // Step detail
         val stepDetail = TextView(this).apply {
             text = ""
-            textSize = 12f
-            setTextColor(0xFFA0A0B0.toInt())
+            textSize = 11f
+            setTextColor(0xFF888899.toInt())
             textAlignment = View.TEXT_ALIGNMENT_CENTER
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = (sh / 2 + frameH / 2 + 8 * density).toInt()
+                topMargin = (sh / 2 + frameH / 2 + 14 * density).toInt()
             }
         }
         root.addView(stepDetail)
         stepDetailView = stepDetail
 
-        // Detected info (hidden initially)
-        val detectedInfo = TextView(this).apply {
-            text = ""
-            textSize = 11f
-            setTextColor(0xFF00D2FF.toInt())
-            textAlignment = View.TEXT_ALIGNMENT_CENTER
-            setPadding((16 * density).toInt(), 0, (16 * density).toInt(), 0)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = (sh / 2 + frameH / 2 + 40 * density).toInt()
-            }
-            visibility = View.GONE
-        }
-        root.addView(detectedInfo)
-        detectedInfoView = detectedInfo
-
         // Cancel button
         val cancelBtn = TextView(this).apply {
             text = "CANCEL"
-            textSize = 12f
+            textSize = 11f
             setTextColor(0xFFFF5252.toInt())
             typeface = Typeface.DEFAULT_BOLD
             textAlignment = View.TEXT_ALIGNMENT_CENTER
-            setPadding((24 * density).toInt(), (8 * density).toInt(), (24 * density).toInt(), (8 * density).toInt())
+            setPadding((20 * density).toInt(), (6 * density).toInt(), (20 * density).toInt(), (6 * density).toInt())
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
-                bottomMargin = (60 * density).toInt()
+                bottomMargin = (50 * density).toInt()
             }
-            setOnClickListener {
-                serviceScope.launch {
-                    hideScanOverlay()
-                }
-            }
+            setOnClickListener { serviceScope.launch { hideScanOverlay() } }
         }
         root.addView(cancelBtn)
 
@@ -506,16 +444,8 @@ class FloatingButtonService : Service() {
     private fun updateScanStep(title: String, detail: String, progress: Float) {
         stepTitleView?.text = title
         stepDetailView?.text = detail
-        // Optionally stop animation near completion
-        if (progress >= 1.0f) {
-            scanAnimator?.cancel()
-        }
-    }
-
-    private fun showDetectedInfo(text: String) {
-        if (text.isBlank()) return
-        detectedInfoView?.text = text
-        detectedInfoView?.visibility = View.VISIBLE
+        stepDetailView?.visibility = if (detail.isBlank()) View.GONE else View.VISIBLE
+        if (progress >= 1.0f) scanAnimator?.cancel()
     }
 
     private fun hideScanOverlay() {
@@ -526,205 +456,286 @@ class FloatingButtonService : Service() {
         scanFrameView = null
         stepTitleView = null
         stepDetailView = null
-        detectedInfoView = null
     }
 
-    // ========== Result Panel ==========
+    // ========== Result Panel (new layout) ==========
 
     @SuppressLint("SetTextI18n")
-    private fun showResultPanel(analysis: DraftAnalysis) {
+    private fun showResultPanel(analysis: DraftAnalysis, draftState: DraftState?) {
         dismissResultPanel()
 
-        val density = resources.displayMetrics.density
-        val panelWidth = (minOf(screenCaptureManager.screenWidth * 0.88f, 380 * density)).toInt()
+        val d = resources.displayMetrics.density
+        val sw = screenCaptureManager.screenWidth
 
+        // Main container — full screen, transparent
+        val root = FrameLayout(this)
+
+        // Content panel — positioned at center, semi-transparent dark
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xE61A1A2E.toInt())
-            setPadding((16 * density).toInt(), (12 * density).toInt(), (16 * density).toInt(), (12 * density).toInt())
-            elevation = 16f
+            setBackgroundColor(0xA0121225.toInt()) // ~63% opaque dark
+            setPadding((14 * d).toInt(), (10 * d).toInt(), (14 * d).toInt(), (10 * d).toInt())
         }
 
-        // Header row
-        val headerRow = LinearLayout(this).apply {
+        // === ROW 1: Map info (left) + Bans (right) ===
+        val topRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val header = TextView(this).apply {
-            text = "DRAFT ANALYSIS"
-            textSize = 14f
-            setTextColor(0xFF00D2FF.toInt())
-            typeface = Typeface.DEFAULT_BOLD
-            layoutParams = LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
-            )
+
+        // Left: GameMode - MapName
+        val mapInfo = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        headerRow.addView(header)
-
-        // Mode badge in results
-        val modeBadge = TextView(this).apply {
-            text = if (isAiMode) "AI+API" else "API"
-            textSize = 9f
-            setTextColor(0xFF000000.toInt())
-            setBackgroundColor(if (isAiMode) 0xFF00D2FF.toInt() else 0xFF00E676.toInt())
+        val gameModeText = draftState?.mapGameMode?.name?.replace("_", " ") ?: ""
+        val mapNameText = draftState?.mapName?.ifBlank { null } ?: "Unknown Map"
+        mapInfo.addView(TextView(this).apply {
+            text = "${gameModeText.uppercase()} - $mapNameText"
+            textSize = 13f
+            setTextColor(0xFF00E676.toInt())
             typeface = Typeface.DEFAULT_BOLD
-            setPadding((5 * density).toInt(), (1 * density).toInt(), (5 * density).toInt(), (1 * density).toInt())
-        }
-        headerRow.addView(modeBadge)
-        panel.addView(headerRow)
+            maxLines = 1
+        })
+        topRow.addView(mapInfo)
 
-        // Team / Enemy info
-        val prefs = getSharedPreferences("brawldrafter", MODE_PRIVATE)
-
-        // Map info
-        if (analysis.mapAnalysis.isNotBlank() && analysis.mapAnalysis != "Map not detected") {
-            val mapText = TextView(this).apply {
-                text = analysis.mapAnalysis
-                textSize = 12f
-                setTextColor(0xFFA0A0B0.toInt())
-                setPadding(0, (4 * density).toInt(), 0, (6 * density).toInt())
+        // Right: Bans (smaller)
+        val allBans = (draftState?.teamBans ?: emptyList()) + (draftState?.enemyBans ?: emptyList())
+        if (allBans.isNotEmpty()) {
+            val bansView = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.END
             }
-            panel.addView(mapText)
+            bansView.addView(TextView(this).apply {
+                text = "BAN: ${allBans.joinToString(", ")}"
+                textSize = 10f
+                setTextColor(0xFFFF5252.toInt())
+                typeface = Typeface.DEFAULT_BOLD
+                maxLines = 2
+            })
+            topRow.addView(bansView)
+        }
+        panel.addView(topRow)
+
+        // Thin separator
+        panel.addView(makeSeparator(d, 0xFF2A2A40.toInt()))
+
+        // === ROW 2: Team picks (left) | Enemy picks (right) ===
+        val teamsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
         }
 
-        // Separator
-        val sep = View(this).apply {
-            setBackgroundColor(0xFF333355.toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, (1 * density).toInt()
-            ).apply { setMargins(0, (4 * density).toInt(), 0, (8 * density).toInt()) }
-        }
-        panel.addView(sep)
+        // Our team (left half)
+        val teamSection = createTeamSection(
+            title = "OUR TEAM",
+            picks = draftState?.teamPicks ?: emptyList(),
+            maxSlots = 3,
+            recommendations = analysis.recommendations,
+            isEnemy = false,
+            density = d
+        )
+        teamSection.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        teamsRow.addView(teamSection)
 
-        // Recommendations
-        analysis.recommendations.forEachIndexed { index, rec ->
-            val recView = createRecommendationView(rec, index, density)
-            panel.addView(recView)
-        }
+        // Vertical divider
+        teamsRow.addView(View(this).apply {
+            setBackgroundColor(0xFF2A2A40.toInt())
+            layoutParams = LinearLayout.LayoutParams((1 * d).toInt(), LinearLayout.LayoutParams.MATCH_PARENT)
+                .apply { setMargins((6 * d).toInt(), (4 * d).toInt(), (6 * d).toInt(), (4 * d).toInt()) }
+        })
 
-        // Overall advice
-        if (analysis.overallAdvice.isNotBlank()) {
-            val adviceSep = View(this).apply {
-                setBackgroundColor(0xFF333355.toInt())
+        // Enemy team (right half)
+        val enemySection = createTeamSection(
+            title = "ENEMY",
+            picks = draftState?.enemyPicks ?: emptyList(),
+            maxSlots = 3,
+            recommendations = analysis.recommendations,
+            isEnemy = true,
+            density = d
+        )
+        enemySection.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        teamsRow.addView(enemySection)
+
+        panel.addView(teamsRow)
+
+        // Thin separator
+        panel.addView(makeSeparator(d, 0xFF2A2A40.toInt()))
+
+        // === ROW 3: Top suggestion (bottom center) ===
+        val topRec = analysis.recommendations.firstOrNull()
+        if (topRec != null) {
+            val suggestionBox = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundColor(0x30FFFFFF.toInt()) // subtle white tint
+                setPadding((10 * d).toInt(), (8 * d).toInt(), (10 * d).toInt(), (8 * d).toInt())
                 layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, (1 * density).toInt()
-                ).apply { setMargins(0, (6 * density).toInt(), 0, (6 * density).toInt()) }
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
             }
-            panel.addView(adviceSep)
 
-            val adviceText = TextView(this).apply {
-                text = analysis.overallAdvice
-                textSize = 11f
-                setTextColor(0xFFFFD740.toInt())
-                setPadding(0, 0, 0, 0)
-                maxLines = 4
+            // Suggestion header
+            val sugHeader = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
             }
-            panel.addView(adviceText)
+            sugHeader.addView(TextView(this).apply {
+                text = "PICK: "
+                textSize = 11f
+                setTextColor(0xFF00E676.toInt())
+                typeface = Typeface.DEFAULT_BOLD
+            })
+            sugHeader.addView(TextView(this).apply {
+                text = topRec.brawlerName
+                textSize = 16f
+                setTextColor(0xFFFFFFFF.toInt())
+                typeface = Typeface.DEFAULT_BOLD
+            })
+            // Score badge
+            val gradeColor = gradeColor(topRec.grade)
+            sugHeader.addView(TextView(this).apply {
+                text = "  ${topRec.grade} ${topRec.score.toInt()}%  "
+                textSize = 11f
+                setTextColor(gradeColor)
+                typeface = Typeface.DEFAULT_BOLD
+                setBackgroundColor(0x40FFFFFF.toInt())
+                setPadding((4 * d).toInt(), (1 * d).toInt(), (4 * d).toInt(), (1 * d).toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { leftMargin = (6 * d).toInt() }
+            })
+            suggestionBox.addView(sugHeader)
+
+            // Tags (counters/synergy/weak)
+            val tags = mutableListOf<String>()
+            if (topRec.counterTo.isNotEmpty()) tags.add("Counters ${topRec.counterTo.joinToString(", ")}")
+            if (topRec.synergyWith.isNotEmpty()) tags.add("Synergy ${topRec.synergyWith.joinToString(", ")}")
+            if (topRec.weakTo.isNotEmpty()) tags.add("Weak to ${topRec.weakTo.joinToString(", ")}")
+            if (tags.isNotEmpty()) {
+                suggestionBox.addView(TextView(this).apply {
+                    text = tags.joinToString("  |  ")
+                    textSize = 10f
+                    setTextColor(0xFF00D2FF.toInt())
+                    maxLines = 2
+                    setPadding(0, (3 * d).toInt(), 0, 0)
+                })
+            }
+
+            // Reasoning / strategy
+            if (topRec.reasoning.isNotBlank() && !topRec.reasoning.startsWith("AI not configured")) {
+                suggestionBox.addView(TextView(this).apply {
+                    text = topRec.reasoning
+                    textSize = 10f
+                    setTextColor(0xFFB0B0C0.toInt())
+                    maxLines = 3
+                    setPadding(0, (3 * d).toInt(), 0, 0)
+                })
+            }
+
+            panel.addView(suggestionBox)
         }
 
         // Close button
-        val closeBtn = TextView(this).apply {
-            text = "Close"
-            textSize = 12f
-            setTextColor(0xFFA0A0B0.toInt())
+        panel.addView(TextView(this).apply {
+            text = "tap anywhere to close"
+            textSize = 9f
+            setTextColor(0xFF666680.toInt())
             textAlignment = View.TEXT_ALIGNMENT_CENTER
-            setPadding(0, (12 * density).toInt(), 0, (4 * density).toInt())
-            setOnClickListener { dismissResultPanel() }
-        }
-        panel.addView(closeBtn)
+            setPadding(0, (6 * d).toInt(), 0, 0)
+        })
 
-        val params = WindowManager.LayoutParams(
-            panelWidth,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
+        // Wrap panel in a centered container
+        val panelWidth = (minOf(sw * 0.92f, 420 * d)).toInt()
+        panel.layoutParams = FrameLayout.LayoutParams(panelWidth, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.CENTER
         }
 
-        windowManager.addView(panel, params)
-        resultPanel = panel
+        root.addView(panel)
+
+        // Tap root to dismiss
+        root.setOnClickListener { dismissResultPanel() }
+        panel.setOnClickListener { /* consume click on panel itself */ }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        )
+
+        windowManager.addView(root, params)
+        resultPanel = root
     }
 
     @SuppressLint("SetTextI18n")
-    private fun createRecommendationView(rec: Recommendation, index: Int, density: Float): LinearLayout {
-        val gradeColor = when (rec.grade) {
-            "S" -> 0xFF00E676.toInt()
-            "A" -> 0xFF00D2FF.toInt()
-            "B" -> 0xFFFFD740.toInt()
-            "C" -> 0xFFFF9100.toInt()
-            else -> 0xFFFF5252.toInt()
-        }
+    private fun createTeamSection(
+        title: String,
+        picks: List<String>,
+        maxSlots: Int,
+        recommendations: List<Recommendation>,
+        isEnemy: Boolean,
+        density: Float
+    ): LinearLayout {
+        val section = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, (5 * density).toInt(), 0, (5 * density).toInt())
+        // Section title
+        section.addView(TextView(this).apply {
+            text = title
+            textSize = 9f
+            setTextColor(if (isEnemy) 0xFFFF5252.toInt() else 0xFF00E676.toInt())
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, (3 * density).toInt())
+        })
 
-            // Rank number
-            addView(TextView(this@FloatingButtonService).apply {
-                text = "${index + 1}"
-                textSize = 12f
-                setTextColor(0xFF666680.toInt())
-                setPadding((4 * density).toInt(), 0, (8 * density).toInt(), 0)
-                gravity = Gravity.CENTER_VERTICAL
-            })
-
-            // Grade badge
-            addView(TextView(this@FloatingButtonService).apply {
-                text = rec.grade
-                textSize = 20f
-                setTextColor(gradeColor)
-                typeface = Typeface.DEFAULT_BOLD
-                setPadding((4 * density).toInt(), 0, (10 * density).toInt(), 0)
-                gravity = Gravity.CENTER_VERTICAL
-            })
-
-            // Brawler info
-            addView(LinearLayout(this@FloatingButtonService).apply {
-                orientation = LinearLayout.VERTICAL
-
-                addView(TextView(this@FloatingButtonService).apply {
-                    text = "${rec.brawlerName}  ${rec.score.toInt()}%"
-                    textSize = 14f
+        // Fill slots: picked brawlers + recommended for empty slots
+        val topRec = recommendations.firstOrNull()?.brawlerName ?: "???"
+        for (i in 0 until maxSlots) {
+            if (i < picks.size) {
+                // Picked brawler
+                section.addView(TextView(this).apply {
+                    text = "  ${picks[i]}"
+                    textSize = 13f
                     setTextColor(0xFFFFFFFF.toInt())
                     typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
                 })
-
-                if (rec.winRateOnMap > 0) {
-                    addView(TextView(this@FloatingButtonService).apply {
-                        text = "Map WR: ${"%.1f".format(rec.winRateOnMap)}%"
-                        textSize = 11f
-                        setTextColor(0xFFA0A0B0.toInt())
+            } else {
+                // Empty slot — show recommended pick
+                val recommended = if (!isEnemy) recommendations.firstOrNull() else null
+                section.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
+                    addView(TextView(this).apply {
+                        text = if (recommended != null) "  -> ${recommended.brawlerName}" else "  ---"
+                        textSize = 12f
+                        setTextColor(if (recommended != null) 0xFFFFD740.toInt() else 0xFF555566.toInt())
+                        typeface = if (recommended != null) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                     })
-                }
-
-                // Tags line
-                val tags = mutableListOf<String>()
-                if (rec.counterTo.isNotEmpty()) tags.add("Counters: ${rec.counterTo.joinToString(", ")}")
-                if (rec.synergyWith.isNotEmpty()) tags.add("Synergy: ${rec.synergyWith.joinToString(", ")}")
-                if (rec.weakTo.isNotEmpty()) tags.add("Weak to: ${rec.weakTo.joinToString(", ")}")
-                if (tags.isNotEmpty()) {
-                    addView(TextView(this@FloatingButtonService).apply {
-                        text = tags.joinToString("  |  ")
-                        textSize = 10f
-                        setTextColor(0xFF00D2FF.toInt())
-                        setPadding(0, (2 * density).toInt(), 0, 0)
-                        maxLines = 2
-                    })
-                }
-
-                if (rec.reasoning.isNotBlank() && rec.reasoning != "AI not configured. Configure API key in settings.") {
-                    addView(TextView(this@FloatingButtonService).apply {
-                        text = rec.reasoning
-                        textSize = 10f
-                        setTextColor(0xFFA0A0B0.toInt())
-                        setPadding(0, (2 * density).toInt(), 0, 0)
-                        maxLines = 3
-                    })
-                }
-            })
+                })
+            }
         }
+
+        return section
+    }
+
+    private fun makeSeparator(density: Float, color: Int): View {
+        return View(this).apply {
+            setBackgroundColor(color)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, (1 * density).toInt()
+            ).apply { setMargins(0, (4 * density).toInt(), 0, (4 * density).toInt()) }
+        }
+    }
+
+    private fun gradeColor(grade: String): Int = when (grade) {
+        "S" -> 0xFF00E676.toInt()
+        "A" -> 0xFF00D2FF.toInt()
+        "B" -> 0xFFFFD740.toInt()
+        "C" -> 0xFFFF9100.toInt()
+        else -> 0xFFFF5252.toInt()
     }
 
     private fun dismissResultPanel() {
