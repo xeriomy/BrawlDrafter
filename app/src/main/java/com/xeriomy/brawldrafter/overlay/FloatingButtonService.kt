@@ -318,7 +318,6 @@ class FloatingButtonService : Service() {
             if (finalDraftState.teamPicks.isNotEmpty()) append("Team: ${finalDraftState.teamPicks.joinToString(", ")}  ")
             if (finalDraftState.enemyPicks.isNotEmpty()) append("Enemy: ${finalDraftState.enemyPicks.joinToString(", ")}  ")
             if (finalDraftState.mapName.isNotBlank()) append("Map: ${finalDraftState.mapName}")
-            if (!hasBrawlers && hasMapInfo) append("  (map-based recommendations)")
         }
         showDetectedInfo(detectedText.trim())
 
