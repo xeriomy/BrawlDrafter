@@ -267,21 +267,49 @@ class FloatingButtonService : Service() {
         val bitmap = screenCaptureManager.captureScreen()
             ?: return null
 
-        // Step 2: Run OCR
-        updateScanStep("Running OCR", "Scanning for text on screen...", 0.3f)
+        // Step 2: Run OCR for map name and game mode (text is shown on draft screen)
+        updateScanStep("Running OCR", "Scanning for map and mode text...", 0.25f)
         val textWithPositions = ocrEngine.analyzeWithPositions(bitmap)
 
-        // Step 3: Parse draft state
-        updateScanStep("Analyzing Draft", "Detecting brawlers and map...", 0.55f)
-
-        val draftState: DraftState = if (textWithPositions.isNotEmpty()) {
+        val ocrDraftState: DraftState = if (textWithPositions.isNotEmpty()) {
             DraftScreenParser.parseWithPositions(textWithPositions, sw, sh)
         } else {
             ocrEngine.analyzeDraftScreen(bitmap)
         }
 
-        // Validate — is this actually a draft screen?
-        if (!draftState.isValidDraft) {
+        // Step 3: Identify brawlers (vision for AI mode, or OCR fallback)
+        val finalDraftState: DraftState = if (isAiMode) {
+            // AI+API: use vision API to identify brawlers from their portrait icons
+            updateScanStep("Analyzing Draft", "Identifying brawlers from icons...", 0.45f)
+            val app = application as? BrawlDrafterApp
+            val engine = app?.currentEngine
+            val visionId = engine?.createVisionIdentifier()
+
+            if (visionId != null) {
+                try {
+                    val visionResult = visionId.identify(bitmap)
+                    updateScanStep("Analyzing Draft", "Brawlers identified!", 0.6f)
+                    visionResult.toDraftState(ocrGameMode = ocrDraftState.mapGameMode)
+                } catch (e: Exception) {
+                    // Vision failed, fall back to OCR results
+                    ocrDraftState
+                }
+            } else {
+                ocrDraftState
+            }
+        } else {
+            // API-only: rely on OCR for map/mode, brawler picks won't be available from icons
+            ocrDraftState
+        }
+
+        // Step 4: Validate — is this actually a draft screen?
+        // API-only: map name or game mode is enough (recommends best map brawlers)
+        // AI+API: vision may have found brawlers, or map info from OCR
+        val hasBrawlers = finalDraftState.allPicks.isNotEmpty()
+        val hasMapInfo = finalDraftState.mapName.isNotBlank() ||
+                finalDraftState.mapGameMode != com.xeriomy.brawldrafter.data.model.MapInfo.GameMode.UNKNOWN
+
+        if (!hasBrawlers && !hasMapInfo) {
             updateScanStep("No Draft Found", "Switch to Brawl Stars draft screen", 1.0f)
             delay(1200)
             return null
@@ -289,23 +317,24 @@ class FloatingButtonService : Service() {
 
         // Show detected info
         val detectedText = buildString {
-            if (draftState.teamPicks.isNotEmpty()) append("Team: ${draftState.teamPicks.joinToString(", ")}  ")
-            if (draftState.enemyPicks.isNotEmpty()) append("Enemy: ${draftState.enemyPicks.joinToString(", ")}  ")
-            if (draftState.mapName.isNotBlank()) append("Map: ${draftState.mapName}")
+            if (finalDraftState.teamPicks.isNotEmpty()) append("Team: ${finalDraftState.teamPicks.joinToString(", ")}  ")
+            if (finalDraftState.enemyPicks.isNotEmpty()) append("Enemy: ${finalDraftState.enemyPicks.joinToString(", ")}  ")
+            if (finalDraftState.mapName.isNotBlank()) append("Map: ${finalDraftState.mapName}")
+            if (!hasBrawlers && hasMapInfo) append("  (map-based recommendations)")
         }
-        showDetectedInfo(detectedText)
+        showDetectedInfo(detectedText.trim())
 
-        // Step 4: Get recommendations
+        // Step 5: Get recommendations
         val modeLabel = if (isAiMode) "AI + API Analysis" else "Meta Data Analysis"
-        updateScanStep(modeLabel, "Generating pick recommendations...", 0.8f)
+        updateScanStep(modeLabel, "Generating pick recommendations...", 0.75f)
 
         val app = application as? BrawlDrafterApp
         val engine = app?.currentEngine
 
         val analysis = if (isAiMode) {
-            engine?.analyze(draftState) ?: engine?.analyzeApiOnly(draftState) ?: return null
+            engine?.analyze(finalDraftState) ?: engine?.analyzeApiOnly(finalDraftState) ?: return null
         } else {
-            engine?.analyzeApiOnly(draftState) ?: return null
+            engine?.analyzeApiOnly(finalDraftState) ?: return null
         }
 
         updateScanStep("Complete", "Preparing results...", 1.0f)

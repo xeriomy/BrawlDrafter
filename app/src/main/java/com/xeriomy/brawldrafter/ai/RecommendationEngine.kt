@@ -1,5 +1,6 @@
 package com.xeriomy.brawldrafter.ai
 
+import android.graphics.Bitmap
 import com.xeriomy.brawldrafter.data.api.LlmClient
 import com.xeriomy.brawldrafter.data.api.LlmProvider
 import com.xeriomy.brawldrafter.data.model.*
@@ -21,6 +22,14 @@ class RecommendationEngine(
     private val llmClient: LlmClient? = null,
     private val metaRepository: com.xeriomy.brawldrafter.data.repository.MetaRepository
 ) {
+    /** Whether this engine has vision capability (LLM configured with vision support). */
+    val hasVision: Boolean get() = llmClient != null
+
+    /** Create a vision identifier using the same LLM credentials. */
+    fun createVisionIdentifier(): VisionBrawlerIdentifier? {
+        val client = llmClient ?: return null
+        return VisionBrawlerIdentifier(client.provider, client.apiKey, client.baseUrl)
+    }
 
     /**
      * Main entry point - analyze the current draft and return recommendations.

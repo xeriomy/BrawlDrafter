@@ -57,13 +57,14 @@ data class DraftState(
         get() = ALL_BRAWLER_NAMES.filter { it !in allPicks }
 
     /** Whether this looks like a real Brawl Stars draft screen.
-     *  Rejects random UI text by requiring substantive evidence. */
+     *  Accepts: real brawler names, game mode keywords, valid map name, or multiple short matches. */
     val isValidDraft: Boolean
         get() {
             val hasRealBrawlers = allPicks.count { it.length > 3 } >= 1
             val hasGameMode = mapGameMode != MapInfo.GameMode.UNKNOWN
             val hasMultipleDetections = allPicks.size >= 2
-            return hasRealBrawlers || hasGameMode || hasMultipleDetections
+            val hasMapName = mapName.length >= 4
+            return hasRealBrawlers || hasGameMode || hasMultipleDetections || hasMapName
         }
 }
 

@@ -109,9 +109,9 @@ object LlmApiFactory {
  * and parses the response into a DraftAnalysis.
  */
 class LlmClient(
-    private val provider: LlmProvider,
-    private val apiKey: String,
-    private val baseUrl: String? = null
+    val provider: LlmProvider,
+    val apiKey: String,
+    val baseUrl: String? = null
 ) {
     private val api = LlmApiFactory.create(provider, apiKey, baseUrl)
 

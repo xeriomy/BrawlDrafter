@@ -1,6 +1,7 @@
 package com.xeriomy.brawldrafter.ai
 
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import com.xeriomy.brawldrafter.data.model.*
 
@@ -159,6 +160,61 @@ Rules:
                 }
             } else {
                 DraftAnalysis(emptyList(), overallAdvice = "Failed to parse AI response")
+            }
+        }
+    const val VISION_PROMPT = """You are analyzing a Brawl Stars draft screen screenshot.
+
+The draft screen layout:
+- Top section: ENEMY team brawlers (shown as circular portrait icons, left to right)
+- Bottom section: YOUR TEAM brawlers (shown as circular portrait icons, left to right)
+- Center area: Map name and game mode text
+- Banned brawlers may have an X overlay or appear grayed out
+
+Identify ALL brawlers visible in the draft. Determine if each is on the top row (enemy) or bottom row (team). Also read the map name and game mode if visible.
+
+Respond with ONLY a valid JSON object (no markdown, no explanation):
+{
+  "teamPicks": ["BrawlerName1"],
+  "enemyPicks": ["BrawlerName1"],
+  "mapName": "map name here",
+  "gameMode": "game mode here"
+}
+
+Known Brawl Stars brawlers: Shelly, Nita, Colt, Bull, Jessie, Brock, Dynamike, Bo, El Primo, Barley, Poco, Rosa, Rico, Darryl, Penny, Carl, Pam, Frank, Mortis, Tara, Gene, Max, Sprout, Byron, Squeak, Tick, Amber, Lola, Colette, Edgar, Griff, Grom, Bonnie, Fang, Eve, Janet, Lou, Draco, Mico, Kenji, Juju, Angelo, Pearl, Berry, Lily, Clancy, Moe, Melodie, Shade, Chester, Gray, Kit, Lancelot, Cordelius, Ruffs, Buster, Charli, Gus, Dou, Drew, Joy, Belle, Surge, Sandy, Leon, Crow, Spike, Bea, Emz, Stu, Buzz, Nani, Meg, Gale, Ash"""
+
+    /**
+     * Parses the vision API JSON response into a VisionDraftResult.
+     */
+    fun parseVisionResponse(jsonString: String): VisionDraftResult {
+        val gson = Gson()
+        val clean = jsonString.trim()
+            .removePrefix("```json").removePrefix("```")
+            .removeSuffix("```").trim()
+
+        return try {
+            val json = gson.fromJson(clean, JsonObject::class.java)
+            VisionDraftResult(
+                teamPicks = json.getAsJsonArray("teamPicks")?.map { it.asString } ?: emptyList(),
+                enemyPicks = json.getAsJsonArray("enemyPicks")?.map { it.asString } ?: emptyList(),
+                mapName = json.get("mapName")?.asString ?: "",
+                gameMode = json.get("gameMode")?.asString ?: ""
+            )
+        } catch (e: Exception) {
+            val match = Regex("\\{.*\\}", RegexOption.DOT_MATCHES_ALL).find(clean)?.value
+            if (match != null) {
+                try {
+                    val json = gson.fromJson(match, JsonObject::class.java)
+                    VisionDraftResult(
+                        teamPicks = json.getAsJsonArray("teamPicks")?.map { it.asString } ?: emptyList(),
+                        enemyPicks = json.getAsJsonArray("enemyPicks")?.map { it.asString } ?: emptyList(),
+                        mapName = json.get("mapName")?.asString ?: "",
+                        gameMode = json.get("gameMode")?.asString ?: ""
+                    )
+                } catch (_: Exception) {
+                    VisionDraftResult()
+                }
+            } else {
+                VisionDraftResult()
             }
         }
     }
