@@ -704,11 +704,11 @@ class FloatingButtonService : Service() {
             } else {
                 // Empty slot — show recommended pick
                 val recommended = if (!isEnemy) recommendations.firstOrNull() else null
-                section.addView(LinearLayout(this).apply {
+                section.addView(LinearLayout(this@FloatingButtonService).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(0, (2 * density).toInt(), 0, (2 * density).toInt())
-                    addView(TextView(this).apply {
+                    addView(TextView(this@FloatingButtonService).apply {
                         text = if (recommended != null) "  -> ${recommended.brawlerName}" else "  ---"
                         textSize = 12f
                         setTextColor(if (recommended != null) 0xFFFFD740.toInt() else 0xFF555566.toInt())
