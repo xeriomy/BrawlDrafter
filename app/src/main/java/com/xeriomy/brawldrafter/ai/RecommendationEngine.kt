@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
  * This runs the hybrid approach: data-driven scoring + AI reasoning.
  */
 class RecommendationEngine(
-    private val llmClient: LlmClient,
+    private val llmClient: LlmClient? = null,
     private val metaRepository: com.xeriomy.brawldrafter.data.repository.MetaRepository
 ) {
 
@@ -43,16 +43,33 @@ class RecommendationEngine(
         // Step 4: Build prompt with all available data
         val prompt = PromptBuilder.buildPrompt(draftState, resolvedMap, brawlerData)
 
-        // Step 5: Get AI recommendations
-        val aiAnalysis = try {
-            llmClient.getRecommendations(prompt)
-        } catch (e: Exception) {
-            // Fallback to data-only scoring if LLM fails
+        // Step 5: Get AI recommendations (or data-only if no LLM configured)
+        val aiAnalysis = if (llmClient != null) {
+            try {
+                llmClient.getRecommendations(prompt)
+            } catch (e: Exception) {
+                // Fallback to data-only scoring if LLM fails
+                buildDataOnlyRecommendations(draftState, resolvedMap, brawlerData)
+            }
+        } else {
             buildDataOnlyRecommendations(draftState, resolvedMap, brawlerData)
         }
 
         // Step 6: Merge AI scores with data scores for final ranking
         mergeWithMetaScores(aiAnalysis, resolvedMap, brawlerData)
+    }
+
+    /**
+     * API-only analysis: pure data-driven scoring using live meta data.
+     * No LLM required. Uses map win rates, counter/synergy relationships, and tier ratings.
+     */
+    suspend fun analyzeApiOnly(draftState: DraftState): DraftAnalysis = withContext(Dispatchers.IO) {
+        val mapInfo = if (draftState.mapName.isNotBlank()) {
+            metaRepository.getMapStats(draftState.mapName)
+        } else null
+        val brawlerData = metaRepository.getAllBrawlers()
+        val resolvedMap = mapInfo ?: metaRepository.findBestMapMatch(draftState.mapName)
+        buildDataOnlyRecommendations(draftState, resolvedMap, brawlerData)
     }
 
     /**

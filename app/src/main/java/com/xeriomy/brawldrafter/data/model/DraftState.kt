@@ -55,6 +55,16 @@ data class DraftState(
     /** Brawlers not yet picked */
     val unpicked: List<String>
         get() = ALL_BRAWLER_NAMES.filter { it !in allPicks }
+
+    /** Whether this looks like a real Brawl Stars draft screen.
+     *  Rejects random UI text by requiring substantive evidence. */
+    val isValidDraft: Boolean
+        get() {
+            val hasRealBrawlers = allPicks.count { it.length > 3 } >= 1
+            val hasGameMode = mapGameMode != MapInfo.GameMode.UNKNOWN
+            val hasMultipleDetections = allPicks.size >= 2
+            return hasRealBrawlers || hasGameMode || hasMultipleDetections
+        }
 }
 
 /**

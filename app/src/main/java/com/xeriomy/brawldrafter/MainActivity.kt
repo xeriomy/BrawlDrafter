@@ -3,7 +3,6 @@ package com.xeriomy.brawldrafter
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,18 +19,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import com.xeriomy.brawldrafter.data.api.LlmClient
 import com.xeriomy.brawldrafter.data.api.LlmProvider
-import com.xeriomy.brawldrafter.data.repository.MetaRepository
 import com.xeriomy.brawldrafter.overlay.FloatingButtonService
 import com.xeriomy.brawldrafter.ui.theme.BrawlDrafterTheme
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -69,11 +65,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Check and request all required permissions, then start overlay.
-     */
     private fun startWithPermissions() {
-        // 1. Check overlay permission
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -84,7 +76,6 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        // 2. Request screen capture permission
         val captureManager = com.xeriomy.brawldrafter.capture.ScreenCaptureManager(this)
         val captureIntent = captureManager.createCaptureIntent()
         mediaProjectionLauncher.launch(captureIntent)
@@ -115,9 +106,11 @@ fun MainScreen(
     onStopClick: () -> Unit,
     context: Context
 ) {
-    val coroutineScope = rememberCoroutineScope()
-    var apiKey by remember { mutableStateOf("") }
-    var selectedProvider by remember { mutableStateOf("OpenAI") }
+    // Load saved settings
+    val prefs = remember { context.getSharedPreferences("brawldrafter", Context.MODE_PRIVATE) }
+    var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
+    var selectedProvider by remember { mutableStateOf(prefs.getString("provider", "OpenAI") ?: "OpenAI") }
+    var selectedMode by remember { mutableStateOf(prefs.getString("mode", "api_only") ?: "api_only") }
     var isRunning by remember { mutableStateOf(false) }
 
     Column(
@@ -167,7 +160,7 @@ fun MainScreen(
                 if (isRunning) {
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "Switch to Brawl Stars and tap the floating BD button during draft to get recommendations.",
+                        text = "Switch to Brawl Stars and tap the floating BD button during draft.",
                         fontSize = 12.sp,
                         color = Color(0xFFA0A0B0)
                     )
@@ -177,10 +170,79 @@ fun MainScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // API Configuration
+        // Mode selector
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF16213E)),
             modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp)
+            ) {
+                Text(
+                    text = "Analysis Mode",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.White
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // API Only mode
+                    val isApiOnly = selectedMode == "api_only"
+                    OutlinedButton(
+                        onClick = { selectedMode = "api_only" },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (isApiOnly) Color(0xFF0F3460) else Color.Transparent,
+                            contentColor = if (isApiOnly) Color(0xFF00E676) else Color(0xFFA0A0B0)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("API Only", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("No API key needed", fontSize = 10.sp)
+                        }
+                    }
+
+                    // AI + API mode
+                    val isAiPlusApi = selectedMode == "ai_plus_api"
+                    OutlinedButton(
+                        onClick = { selectedMode = "ai_plus_api" },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (isAiPlusApi) Color(0xFF0F3460) else Color.Transparent,
+                            contentColor = if (isAiPlusApi) Color(0xFF00D2FF) else Color(0xFFA0A0B0)
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("AI + API", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text("Requires API key", fontSize = 10.sp)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = if (isApiOnly)
+                        "Uses live meta data (win rates, counters, synergies) to score picks. Works without any API key."
+                    else
+                        "Combines AI reasoning with live meta data for the best recommendations.",
+                    fontSize = 11.sp,
+                    color = Color(0xFF666680)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        // AI Configuration (only shown in AI+API mode)
+        val aiAlpha = if (selectedMode == "ai_plus_api") 1f else 0.4f
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF16213E)),
+            modifier = Modifier.fillMaxWidth().alpha(aiAlpha)
         ) {
             Column(
                 modifier = Modifier.padding(20.dp)
@@ -206,6 +268,7 @@ fun MainScreen(
                         val isSelected = selectedProvider == provider
                         OutlinedButton(
                             onClick = { selectedProvider = provider },
+                            enabled = selectedMode == "ai_plus_api",
                             colors = ButtonDefaults.outlinedButtonColors(
                                 containerColor = if (isSelected) Color(0xFF0F3460) else Color.Transparent,
                                 contentColor = if (isSelected) Color(0xFF00D2FF) else Color(0xFFA0A0B0)
@@ -227,6 +290,7 @@ fun MainScreen(
                     onValueChange = { apiKey = it },
                     placeholder = { Text("sk-... or API key", fontSize = 13.sp, color = Color(0xFF666680)) },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = selectedMode == "ai_plus_api",
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White,
                         unfocusedTextColor = Color.White,
@@ -258,11 +322,26 @@ fun MainScreen(
         ) {
             Button(
                 onClick = {
-                    // Save API key and start
-                    if (apiKey.isNotBlank()) {
-                        val prefs = context.getSharedPreferences("brawldrafter", Context.MODE_PRIVATE)
-                        prefs.edit().putString("api_key", apiKey).putString("provider", selectedProvider).apply()
+                    // Save all settings
+                    prefs.edit()
+                        .putString("api_key", apiKey)
+                        .putString("provider", selectedProvider)
+                        .putString("mode", selectedMode)
+                        .apply()
+
+                    // Update the engine in the app
+                    val app = (context.applicationContext as BrawlDrafterApp)
+                    val provider = when (selectedProvider) {
+                        "Gemini" -> LlmProvider.GEMINI
+                        "Claude" -> LlmProvider.CLAUDE
+                        else -> LlmProvider.OPENAI
                     }
+                    app.updateEngine(
+                        apiKey = if (selectedMode == "ai_plus_api") apiKey else null,
+                        provider = provider,
+                        mode = selectedMode
+                    )
+
                     isRunning = true
                     onStartClick()
                 },
@@ -299,14 +378,22 @@ fun MainScreen(
                 Text("How to Use", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 Spacer(Modifier.height(12.dp))
 
-                listOf(
+                val steps = if (selectedMode == "api_only") listOf(
+                    "1. Select 'API Only' mode above (no API key needed!)",
+                    "2. Tap 'Start Overlay' and grant permissions",
+                    "3. Open Brawl Stars and enter a draft",
+                    "4. Tap the floating 'BD' button on screen",
+                    "5. View data-driven pick recommendations!",
+                    "6. The button is draggable - move it anywhere"
+                ) else listOf(
                     "1. Set your LLM API key above (GPT-4o-mini recommended)",
                     "2. Tap 'Start Overlay' and grant permissions",
                     "3. Open Brawl Stars and enter a draft",
                     "4. Tap the floating 'BD' button on screen",
                     "5. View AI-powered pick recommendations!",
                     "6. The button is draggable - move it anywhere"
-                ).forEach { step ->
+                )
+                steps.forEach { step ->
                     Text(step, fontSize = 12.sp, color = Color(0xFFA0A0B0), lineHeight = 18.sp)
                     Spacer(Modifier.height(4.dp))
                 }
