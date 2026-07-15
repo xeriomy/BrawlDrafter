@@ -16,6 +16,7 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 
 /**
@@ -107,11 +108,19 @@ class ScreenCaptureManager(private val context: Context) {
             return@suspendCancellableCoroutine
         }
 
+        // Guard: only resume the continuation once even if onImageAvailable fires multiple times
+        val captured = AtomicBoolean(false)
+
         // Create image reader for one frame
         val reader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
         imageReader = reader
 
         reader.setOnImageAvailableListener({ reader ->
+            if (!captured.compareAndSet(false, true)) {
+                // Already got our frame — discard extras
+                reader.acquireLatestImage()?.close()
+                return@setOnImageAvailableListener
+            }
             val image: Image? = reader.acquireLatestImage()
             val bitmap = image?.toBitmap()
             image?.close()
