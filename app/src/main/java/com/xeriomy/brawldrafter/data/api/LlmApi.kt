@@ -2,11 +2,7 @@ package com.xeriomy.brawldrafter.data.api
 
 import com.xeriomy.brawldrafter.data.model.DraftAnalysis
 import com.xeriomy.brawldrafter.ai.PromptBuilder
-import com.google.gson.annotations.SerializedName
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body

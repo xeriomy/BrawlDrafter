@@ -7,8 +7,6 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.xeriomy.brawldrafter.data.model.DraftState
-import com.xeriomy.brawldrafter.data.model.MapInfo
-import com.xeriomy.brawldrafter.data.model.ALL_BRAWLER_NAMES
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 

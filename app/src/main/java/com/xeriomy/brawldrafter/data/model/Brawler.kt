@@ -51,5 +51,5 @@ val ALL_BRAWLER_NAMES = listOf(
     "Ruffs", "Buster", "Charli", "Gus", "Dou", "Drew",
     "Joy", "Belle", "Surge", "Chromatic", "Sandy",
     "Leon", "Crow", "Spike", "Bea", "Emz", "Stu",
-    "Buzz", "Nani", "Meg", "Chester", "Gale", "Ash"
+    "Buzz", "Nani", "Meg", "Gale", "Ash"
 )

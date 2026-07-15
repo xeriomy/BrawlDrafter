@@ -162,6 +162,8 @@ Rules:
                 DraftAnalysis(emptyList(), overallAdvice = "Failed to parse AI response")
             }
         }
+    }
+
     const val VISION_PROMPT = """You are analyzing a Brawl Stars draft screen screenshot.
 
 The draft screen layout:

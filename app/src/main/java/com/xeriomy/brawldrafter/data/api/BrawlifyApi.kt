@@ -1,7 +1,5 @@
 package com.xeriomy.brawldrafter.data.api
 
-import com.xeriomy.brawldrafter.data.model.Brawler
-import com.xeriomy.brawldrafter.data.model.MapInfo
 import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query

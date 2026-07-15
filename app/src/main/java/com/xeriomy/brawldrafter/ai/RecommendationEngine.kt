@@ -1,8 +1,6 @@
 package com.xeriomy.brawldrafter.ai
 
-import android.graphics.Bitmap
 import com.xeriomy.brawldrafter.data.api.LlmClient
-import com.xeriomy.brawldrafter.data.api.LlmProvider
 import com.xeriomy.brawldrafter.data.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
