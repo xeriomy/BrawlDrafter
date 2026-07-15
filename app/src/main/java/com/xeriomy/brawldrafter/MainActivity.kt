@@ -187,12 +187,14 @@ fun MainScreen(
 
                 Spacer(Modifier.height(12.dp))
 
+                val isApiOnly = selectedMode == "api_only"
+                val isAiPlusApi = !isApiOnly
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // API Only mode
-                    val isApiOnly = selectedMode == "api_only"
                     OutlinedButton(
                         onClick = { selectedMode = "api_only" },
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -208,7 +210,6 @@ fun MainScreen(
                     }
 
                     // AI + API mode
-                    val isAiPlusApi = selectedMode == "ai_plus_api"
                     OutlinedButton(
                         onClick = { selectedMode = "ai_plus_api" },
                         colors = ButtonDefaults.outlinedButtonColors(

@@ -28,6 +28,7 @@ import com.xeriomy.brawldrafter.data.model.Recommendation
 import com.xeriomy.brawldrafter.capture.ScreenCaptureManager
 import com.xeriomy.brawldrafter.ocr.DraftScreenParser
 import com.xeriomy.brawldrafter.ocr.OcrEngine
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
