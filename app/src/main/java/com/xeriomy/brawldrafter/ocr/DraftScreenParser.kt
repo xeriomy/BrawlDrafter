@@ -211,24 +211,42 @@ object DraftScreenParser {
     fun fuzzyMatchBrawler(text: String): String? {
         val cleanText = text.trim()
 
+        // Reject very short text — real brawler names are 3+ chars
+        // and OCR on non-brawler text should not match
+        if (cleanText.length < 3) return null
+
+        // Reject text that's clearly not a name (contains numbers, special chars)
+        if (cleanText.any { it.isDigit() }) return null
+
         // Direct match first
         ALL_BRAWLER_NAMES.firstOrNull { it.equals(cleanText, ignoreCase = true) }
             ?.let { return it }
 
-        // Containment check (OCR might include extra characters)
+        // Containment check — only if the OCR text is close in length to the brawler name
+        // This prevents "Bo" from "About" matching brawler "Bo"
         ALL_BRAWLER_NAMES.firstOrNull { brawler ->
-            cleanText.contains(brawler, ignoreCase = true) || 
-            brawler.contains(cleanText, ignoreCase = true)
+            val lengthRatio = cleanText.length.toFloat() / brawler.length.toFloat()
+            lengthRatio in 0.4..2.5 &&
+            (cleanText.contains(brawler, ignoreCase = true) || 
+             brawler.contains(cleanText, ignoreCase = true))
         }?.let { return it }
 
         // Levenshtein distance based fuzzy matching for OCR errors
+        // Only allow for text length >= 3 and require distance <= 2 (stricter)
+        // Also require the brawler name to be within 1 char of the text length
         val normalizedText = cleanText.lowercase()
             .replace("l", "I").replace("1", "l").replace("0", "O")
             .replace("5", "S").replace("3", "E").replace("8", "B")
             .replace("|", "l").replace("{", "c").replace("}", "}")
 
+        if (normalizedText.length < 3) return null
+
         ALL_BRAWLER_NAMES
-            .filter { levenshteinDistance(normalizedText, it.lowercase()) <= 3 }
+            .filter { brawler ->
+                val nameLower = brawler.lowercase()
+                kotlin.math.abs(normalizedText.length - nameLower.length) <= 1 &&
+                levenshteinDistance(normalizedText, nameLower) <= 2
+            }
             .minByOrNull { levenshteinDistance(normalizedText, it.lowercase()) }
             ?.let { return it }
 

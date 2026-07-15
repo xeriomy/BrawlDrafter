@@ -57,14 +57,19 @@ data class DraftState(
         get() = ALL_BRAWLER_NAMES.filter { it !in allPicks }
 
     /** Whether this looks like a real Brawl Stars draft screen.
-     *  Accepts: real brawler names, game mode keywords, valid map name, or multiple short matches. */
+     *  Strict validation to avoid false positives from scanning the app's own UI.
+     *  Requires either:
+     *  - A recognized Brawl Stars game mode (Gem Grab, Brawl Ball, etc.)
+     *  - 3+ unique real brawler names detected
+     *  - A game mode AND at least 1 brawler
+     */
     val isValidDraft: Boolean
         get() {
-            val hasRealBrawlers = allPicks.count { it.length > 3 } >= 1
+            val uniquePicks = allPicks.toSet()
             val hasGameMode = mapGameMode != MapInfo.GameMode.UNKNOWN
-            val hasMultipleDetections = allPicks.size >= 2
-            val hasMapName = mapName.length >= 4
-            return hasRealBrawlers || hasGameMode || hasMultipleDetections || hasMapName
+            val hasManyBrawlers = uniquePicks.size >= 3
+            val hasBrawlerAndMode = uniquePicks.size >= 1 && hasGameMode
+            return hasManyBrawlers || hasBrawlerAndMode
         }
 }
 

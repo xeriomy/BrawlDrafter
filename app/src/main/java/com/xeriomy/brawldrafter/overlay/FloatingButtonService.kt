@@ -114,10 +114,13 @@ class FloatingButtonService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         intent?.let {
             if (it.hasExtra("resultCode") && it.hasExtra("data")) {
-                val resultCode = it.getIntExtra("resultCode", 0)
-                val data = it.getParcelableExtra<Intent>("data")
-                if (data != null) {
-                    screenCaptureManager.initProjection(resultCode, data)
+                // Only init projection if not already active — reusing resultData causes crash
+                if (!screenCaptureManager.isReady) {
+                    val resultCode = it.getIntExtra("resultCode", 0)
+                    val data = it.getParcelableExtra<Intent>("data")
+                    if (data != null) {
+                        screenCaptureManager.initProjection(resultCode, data)
+                    }
                 }
             }
         }
@@ -302,13 +305,9 @@ class FloatingButtonService : Service() {
         }
 
         // Step 4: Validate — is this actually a draft screen?
-        // API-only: map name or game mode is enough (recommends best map brawlers)
-        // AI+API: vision may have found brawlers, or map info from OCR
-        val hasBrawlers = finalDraftState.allPicks.isNotEmpty()
-        val hasMapInfo = finalDraftState.mapName.isNotBlank() ||
-                finalDraftState.mapGameMode != com.xeriomy.brawldrafter.data.model.MapInfo.GameMode.UNKNOWN
-
-        if (!hasBrawlers && !hasMapInfo) {
+        // Requires: 3+ unique brawler names, OR game mode + 1+ brawler
+        // This prevents false positives from scanning the app's own UI
+        if (!finalDraftState.isValidDraft) {
             updateScanStep("No Draft Found", "Switch to Brawl Stars draft screen", 1.0f)
             delay(1200)
             return null
