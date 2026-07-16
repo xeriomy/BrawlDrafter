@@ -49,7 +49,7 @@ val ALL_BRAWLER_NAMES = listOf(
     "Pearl", "Berry", "Lily", "Clancy", "Moe", "Melodie",
     "Shade", "Chester", "Gray", "Kit", "Lancelot",     "Cordelius",
     "Ruffs", "Buster", "Charli", "Gus", "Dou", "Drew",
-    "Joy", "Belle", "Surge", "Chromatic", "Sandy",
+    "Joy", "Belle", "Surge", "Sandy",
     "Leon", "Crow", "Spike", "Bea", "Emz", "Stu",
     "Buzz", "Nani", "Meg", "Gale", "Ash"
 )
