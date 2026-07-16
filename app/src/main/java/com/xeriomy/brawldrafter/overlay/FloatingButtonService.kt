@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.os.Build
@@ -21,6 +22,7 @@ import com.xeriomy.brawldrafter.data.model.DraftAnalysis
 import com.xeriomy.brawldrafter.data.model.DraftState
 import com.xeriomy.brawldrafter.data.model.Recommendation
 import com.xeriomy.brawldrafter.capture.ScreenCaptureManager
+import com.xeriomy.brawldrafter.accessibility.AppWatcherService
 import com.xeriomy.brawldrafter.ocr.DraftScreenParser
 import com.xeriomy.brawldrafter.ocr.OcrEngine
 import kotlinx.coroutines.Job
@@ -296,10 +298,21 @@ class FloatingButtonService : Service() {
     }
 
     /**
-     * Capture screen → OCR/vision → validate → analyze.
+     * Capture screen → crop → OCR/vision → validate → analyze.
      * Returns null if no valid draft detected.
+     *
+     * Guards:
+     * 1. If AccessibilityService is enabled, only scans when Brawl Stars is foreground
+     * 2. Crops status bar + nav bar off the screenshot before OCR
+     * 3. Hides overlays during capture
      */
     private suspend fun captureAndAnalyze(): Pair<DraftAnalysis, DraftState>? {
+        // GUARD 1: Skip if not in Brawl Stars (if accessibility service is available)
+        if (AppWatcherService.isEnabled && !AppWatcherService.isBrawlStarsForeground()) {
+            updateStatusText("Open Brawl Stars to scan")
+            return null
+        }
+
         val sw = screenCaptureManager.screenWidth
         val sh = screenCaptureManager.screenHeight
 
@@ -308,31 +321,68 @@ class FloatingButtonService : Service() {
         floatingButton?.visibility = View.GONE
         delay(100)
 
-        val bitmap = try {
+        val fullBitmap = try {
             screenCaptureManager.captureScreen()
         } finally {
             livePanel?.visibility = View.VISIBLE
             floatingButton?.visibility = View.VISIBLE
         } ?: return null
 
-        // OCR for text
+        // GUARD 2: Crop status bar (top ~6%) and nav bar (bottom ~4%)
+        // This eliminates carrier names, VPN icons, time, battery, navigation buttons, etc.
+        val cropTop = (sh * 0.06).toInt()
+        val cropBottom = (sh * 0.04).toInt()
+        val bitmap: Bitmap = if (cropTop + cropBottom < sh) {
+            Bitmap.createBitmap(fullBitmap, 0, cropTop, sw, sh - cropTop - cropBottom)
+        } else {
+            fullBitmap
+        }
+
+        // Use cropped dimensions for spatial analysis
+        val croppedH = bitmap.height
+
+        // OCR for text on the cropped image
         val textWithPositions = ocrEngine.analyzeWithPositions(bitmap)
 
+        // Recycle cropped bitmap if it's a copy
+        if (bitmap !== fullBitmap) bitmap.recycle()
+
         val ocrDraftState: DraftState = if (textWithPositions.isNotEmpty()) {
-            DraftScreenParser.parseWithPositions(textWithPositions, sw, sh)
+            DraftScreenParser.parseWithPositions(textWithPositions, sw, croppedH)
         } else {
             DraftState()
         }
 
-        // Vision for AI mode
+        // Recycle full bitmap
+        fullBitmap.recycle()
+
+        // Vision for AI mode — use the full (uncropped) bitmap for better icon recognition
+        // Actually, re-capture is expensive. The cropped one is fine for vision too.
+        // In AI mode, we skip cropping for vision since brawler icons are in the game area anyway.
         val finalDraftState: DraftState = if (isAiMode && ocrDraftState.isValidDraft) {
             val app = application as? BrawlDrafterApp
             val engine = app?.currentEngine
             val visionId = engine?.createVisionIdentifier()
             if (visionId != null) {
                 try {
-                    val visionResult = visionId.identify(bitmap)
-                    visionResult.toDraftState(ocrGameMode = ocrDraftState.mapGameMode)
+                    // Re-capture for vision (full screen, uncropped — icons need full context)
+                    livePanel?.visibility = View.GONE
+                    floatingButton?.visibility = View.GONE
+                    delay(80)
+                    val visionBitmap = try {
+                        screenCaptureManager.captureScreen()
+                    } finally {
+                        livePanel?.visibility = View.VISIBLE
+                        floatingButton?.visibility = View.VISIBLE
+                    } ?: return@captureAndAnalyze ocrDraftState
+                    try {
+                        val visionResult = visionId.identify(visionBitmap)
+                        visionBitmap.recycle()
+                        visionResult.toDraftState(ocrGameMode = ocrDraftState.mapGameMode)
+                    } catch (e: Exception) {
+                        visionBitmap.recycle()
+                        ocrDraftState
+                    }
                 } catch (e: Exception) {
                     ocrDraftState
                 }

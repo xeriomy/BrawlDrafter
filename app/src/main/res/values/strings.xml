@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">BrawlDrafter</string>
+    <string name="accessibility_service_description">BrawlDrafter uses this to detect when Brawl Stars is on screen. It does NOT read any game content or personal data — it only checks which app is in the foreground so the overlay only activates during drafts.</string>
+</resources>

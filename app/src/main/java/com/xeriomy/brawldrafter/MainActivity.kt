@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.xeriomy.brawldrafter.accessibility.AppWatcherService
 import com.xeriomy.brawldrafter.data.api.LlmProvider
 import com.xeriomy.brawldrafter.overlay.FloatingButtonService
 import com.xeriomy.brawldrafter.ui.theme.BrawlDrafterTheme
@@ -164,6 +165,30 @@ fun MainScreen(
                         fontSize = 12.sp,
                         color = Color(0xFFA0A0B0)
                     )
+                }
+
+                // Accessibility service status
+                Spacer(Modifier.height(8.dp))
+                val accessEnabled = AppWatcherService.isEnabled
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = if (accessEnabled) "App Detection: ON" else "App Detection: OFF (recommended)",
+                        fontSize = 11.sp,
+                        color = if (accessEnabled) Color(0xFF00E676) else Color(0xFFFF9100),
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (!accessEnabled) {
+                        TextButton(
+                            onClick = {
+                                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            }
+                        ) {
+                            Text("Enable", fontSize = 11.sp, color = Color(0xFF00D2FF))
+                        }
+                    }
                 }
             }
         }
@@ -381,18 +406,18 @@ fun MainScreen(
 
                 val steps = if (selectedMode == "api_only") listOf(
                     "1. Select 'API Only' mode above (no API key needed!)",
-                    "2. Tap 'Start Overlay' and grant permissions",
-                    "3. Open Brawl Stars and enter a draft",
-                    "4. Tap the floating 'BD' button on screen",
-                    "5. View data-driven pick recommendations!",
-                    "6. The button is draggable - move it anywhere"
+                    "2. Tap 'Enable' above for App Detection (prevents fake scans)",
+                    "3. Tap 'Start Overlay' and grant permissions",
+                    "4. Open Brawl Stars and enter a draft",
+                    "5. Tap the floating 'BD' button — live overlay appears",
+                    "6. It auto-updates as picks happen!"
                 ) else listOf(
                     "1. Set your LLM API key above (GPT-4o-mini recommended)",
-                    "2. Tap 'Start Overlay' and grant permissions",
-                    "3. Open Brawl Stars and enter a draft",
-                    "4. Tap the floating 'BD' button on screen",
-                    "5. View AI-powered pick recommendations!",
-                    "6. The button is draggable - move it anywhere"
+                    "2. Tap 'Enable' above for App Detection (prevents fake scans)",
+                    "3. Tap 'Start Overlay' and grant permissions",
+                    "4. Open Brawl Stars and enter a draft",
+                    "5. Tap the floating 'BD' button — live overlay appears",
+                    "6. It auto-updates as picks happen!"
                 )
                 steps.forEach { step ->
                     Text(step, fontSize = 12.sp, color = Color(0xFFA0A0B0), lineHeight = 18.sp)
